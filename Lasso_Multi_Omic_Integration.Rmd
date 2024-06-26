@@ -32,7 +32,7 @@ x <- read_csv("ibd_sparc_enriched_microbes.csv")
 
 
 
-Code adapted from Priya et al. Nat Microbiol, 2022.
+Adapted from Priya et al. Nat Microbiol, 2022.
 ```{r}
 perform_lasso_cv <- function(predictor_matrix, response_vector, num_folds){
   cv_fit <- cv.glmnet(predictor_matrix, response_vector, alpha = 1, nfolds = num_folds,
