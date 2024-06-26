@@ -1,0 +1,116 @@
+---
+title: "Untitled"
+output: html_document
+date: "2024-06-20"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+Multi-Omic Data Integration
+
+
+```{r}
+library(glmnet)
+library(hdi)
+
+```
+
+
+Import data
+```{r}
+# read in metabolite data
+y <- read_csv("ibd_sparc_metabolomic_data.csv")
+
+# read in differentially abundant microbes 
+x <- read_csv("ibd_sparc_enriched_microbes.csv")
+
+
+```
+
+
+
+Code adapted from Priya et al. Nat Microbiol, 2022.
+```{r}
+perform_lasso_cv <- function(predictor_matrix, response_vector, num_folds){
+  cv_fit <- cv.glmnet(predictor_matrix, response_vector, alpha = 1, nfolds = num_folds,
+                      type.measure = "mse", keep = TRUE, grouped = FALSE, standardize = TRUE)
+  optimal_lambda <- cv_fit$lambda.min
+  return(list(optimal_lambda = optimal_lambda, glmnet_fit = cv_fit$glmnet.fit))
+}
+
+
+```
+
+
+
+```{r}
+estimate_sigma_lasso <- function(predictor_matrix, response_vector, optimal_lambda, tolerance) {
+  lasso_fit <- glmnet(predictor_matrix, response_vector, alpha = 1)
+  lasso_coefficients <- as.vector(coef(lasso_fit, s = optimal_lambda))
+  predicted_response <- as.vector(predict(lasso_fit, newx = predictor_matrix, s = optimal_lambda))
+  num_nonzero_coefs <- sum(abs(lasso_coefficients) > tolerance)
+  ss_res <- sum((response_vector - predicted_response) ^ 2)
+  sigma_hat <- ifelse((length(response_vector) - num_nonzero_coefs - 1) > 0,
+                      sqrt(ss_res / (length(response_vector) - num_nonzero_coefs - 1)),
+                      1)
+  return(list(sigma_hat = sigma_hat, lasso_coefficients = lasso_coefficients))
+}
+
+
+```
+
+
+
+```{r}
+all_lasso_results <- list()
+
+# Iterate over each column in 'y' for each metabolite
+for (microbe_index in seq_len(ncol(y))) {
+  metabolites <- colnames(x)
+  y_i <- y[, microbe_index]
+  microbe_name <- colnames(y)[microbe_index]
+  
+  
+  # Fit lasso CV model and estimate sigma
+  cv_results <- perform_lasso_cv(x, y_i, num_folds = length(y_i))
+  optimal_lambda <- cv_results$optimal_lambda
+  sigma_results <- estimate_sigma_lasso(x, y_i, optimal_lambda, tolerance = 1e-4)
+  
+  # Perform lasso projection inference
+  lasso_proj_results <- lasso.proj(x, y_i, 
+                                   multiplecorr.method = "BH",
+                                   betainit = sigma_results$lasso_coefficients[-1], 
+                                   sigma = sigma_results$sigma_hat,
+                                   suppress.grouptesting = TRUE)
+  
+  # Extracting confidence intervals
+  ci_data <- as.data.frame(confint(lasso_proj_results, level = 0.95))
+  
+  # Prepare the results data frame
+  lasso_results_df <- data.frame(
+    microbes = microbe_name,
+    metabolite = colnames(x),
+    estimate = sigma_results$lasso_coefficients[-1],  # Coefficients without the intercept,
+    p_value = lasso_proj_results$pval,
+    p_adjusted = lasso_proj_results$pval.corr,
+    ci_lower = ci_data$lower,
+    ci_upper = ci_data$upper,
+    stringsAsFactors = FALSE
+  )
+  
+  combined_lasso_results <- rbind(combined_lasso_results, lasso_results_df)
+}
+
+
+
+```
+
+
+
+
+
+
+
